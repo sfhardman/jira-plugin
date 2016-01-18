@@ -2,23 +2,26 @@ package hudson.plugins.jira;
 
 import hudson.AbortException;
 import hudson.EnvVars;
+import hudson.FilePath;
 import hudson.Launcher;
-import hudson.model.AbstractBuild;
-import hudson.model.AbstractProject;
-import hudson.model.Action;
-import hudson.model.BuildListener;
-import hudson.model.Node;
+import hudson.model.*;
+
+import java.io.File;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.util.Arrays;
 import java.util.HashSet;
 import static org.hamcrest.Matchers.instanceOf;
+
+import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 import org.mockito.Mockito;
 import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import org.mockito.ArgumentCaptor;
+import sun.awt.shell.ShellFolder;
+
 import static org.hamcrest.Matchers.anyOf;
 import static org.hamcrest.Matchers.is;
 import static org.junit.Assert.assertThat;
@@ -27,50 +30,59 @@ import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 
 public class JiraEnvironmentVariableBuilderTest {
-     
+
     private static final String JIRA_URL = "http://example.com";
-    private static final String JIRA_URL_PROPERTY_NAME = "JIRA_URL";  
-    private static final String ISSUES_PROPERTY_NAME = "JIRA_ISSUES";  
+    private static final String JIRA_URL_PROPERTY_NAME = "JIRA_URL";
+    private static final String ISSUES_PROPERTY_NAME = "JIRA_ISSUES";
     private static final String ISSUE_ID_1 = "ISS-1";
     private static final String ISSUE_ID_2 = "ISS-2";
-    
+
     // Ordering of set created from collection intializer seems to depend on which JDK is used
     // but isn't important for this purpose
-    private static final String EXPECTED_JIRA_ISSUES_1 = ISSUE_ID_1+","+ISSUE_ID_2;
-    private static final String EXPECTED_JIRA_ISSUES_2 = ISSUE_ID_2+","+ISSUE_ID_1;
-    
-    AbstractBuild build;
+    private static final String EXPECTED_JIRA_ISSUES_1 = ISSUE_ID_1 + "," + ISSUE_ID_2;
+    private static final String EXPECTED_JIRA_ISSUES_2 = ISSUE_ID_2 + "," + ISSUE_ID_1;
+
+    Run run;
     Launcher launcher;
-    BuildListener listener;
+    TaskListener listener;
     EnvVars env;
-    AbstractProject project;
+    Job job;
     JiraSite site;
     UpdaterIssueSelector issueSelector;
     PrintStream logger;
     Node node;
+    FilePath filePath;
+    File file;
 
     @Before
     public void createMocks() throws IOException, InterruptedException {
-        build = mock(AbstractBuild.class);
+        run = mock(Run.class);
         launcher = mock(Launcher.class);
-        listener = mock(BuildListener.class);
+        listener = mock(TaskListener.class);
         env = mock(EnvVars.class);
-        project = mock(AbstractProject.class);
+        job = mock(Job.class);
         site = mock(JiraSite.class);
         issueSelector = mock(UpdaterIssueSelector.class);
         logger = mock(PrintStream.class);
+        file = File.createTempFile("pfx", "sfx");
+        filePath = new FilePath(file);
 
         when(site.getName()).thenReturn(JIRA_URL);
-        
+
         when(listener.getLogger()).thenReturn(logger);
-        
-        when(issueSelector.findIssueIds(build, site, listener))
+
+        when(issueSelector.findIssueIds(run, site, listener))
                 .thenReturn(new HashSet<String>(Arrays.asList(ISSUE_ID_1, ISSUE_ID_2)));
-        
-        when(build.getProject()).thenReturn(project);
-        when(build.getEnvironment(listener)).thenReturn(env);
+
+        when(run.getParent()).thenReturn(job);
+        when(run.getEnvironment(listener)).thenReturn(env);
     }
-    
+
+    @After
+    public void CleanUp() {
+        if (file != null)
+            file.delete();
+    }
 
     @Test
     public void testIssueSelectorDefaultsToDefault() {
@@ -88,7 +100,7 @@ public class JiraEnvironmentVariableBuilderTest {
     public void testPerformWithNoSiteFailsBuild() throws InterruptedException, IOException {
         JiraEnvironmentVariableBuilder builder = spy(new JiraEnvironmentVariableBuilder(issueSelector));
         doReturn(null).when(builder).getSiteForProject((AbstractProject<?, ?>) Mockito.any());
-        builder.perform(build, launcher, listener);
+        builder.perform(run, filePath, launcher, listener);
     }
     
     @Test
@@ -96,12 +108,10 @@ public class JiraEnvironmentVariableBuilderTest {
         JiraEnvironmentVariableBuilder builder = spy(new JiraEnvironmentVariableBuilder(issueSelector));
         doReturn(site).when(builder).getSiteForProject((AbstractProject<?, ?>) Mockito.any());
         
-        boolean result = builder.perform(build, launcher, listener);
-        
-        assertThat(result, is(true));
-        
+        builder.perform(run, filePath, launcher, listener);
+
         ArgumentCaptor<Action> captor = ArgumentCaptor.forClass(Action.class);
-        verify(build).addAction(captor.capture());
+        verify(run).addAction(captor.capture());
         
         assertThat(captor.getValue(),instanceOf(JiraEnvironmentContributingAction.class));
         
